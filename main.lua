@@ -1,5 +1,5 @@
 -- LocalScript → StarterPlayer > StarterPlayerScripts
--- MIDHUB v10.2 - 100% CORRIGIDO
+-- MIDHUB v10.3 - BLACKLIST SYSTEM
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,6 +11,37 @@ local Lighting = game:GetService("Lighting")
 local StarterGui = game:GetService("StarterGui")
 
 local player = Players.LocalPlayer
+
+-- ====================== BLACKLIST SYSTEM ======================
+local Blacklist = {
+    [1535973363] = true, -- Player bloqueado
+    -- Adicione mais IDs aqui:
+    -- [123456789] = true,
+    -- [987654321] = true,
+}
+
+-- Verifica se o jogador atual está na blacklist
+if Blacklist[player.UserId] then
+    -- Destroi o script imediatamente
+    StarterGui:SetCore("SendNotification", {
+        Title = "🚫 ACESSO NEGADO",
+        Text = "Você está na blacklist do MIDHUB!",
+        Duration = 10,
+    })
+    
+    -- Remove o script
+    pcall(function()
+        script:Destroy()
+    end)
+    
+    -- Tenta remover o ScreenGui se já existir
+    pcall(function()
+        local oldGui = player.PlayerGui:FindFirstChild("MIDHUB")
+        if oldGui then oldGui:Destroy() end
+    end)
+    
+    return -- Para a execução do script
+end
 
 -- ====================== CONFIGURAÇÕES ======================
 local Settings = {
@@ -399,7 +430,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -100, 0, 25)
 title.Position = UDim2.new(0, 48, 0, 5)
 title.BackgroundTransparency = 1
-title.Text = "MIDHUB v10.2"
+title.Text = "MIDHUB v10.3"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.TextSize = 16
 title.Font = Enum.Font.GothamBlack
@@ -410,7 +441,7 @@ local sub = Instance.new("TextLabel")
 sub.Size = UDim2.new(0, 100, 0, 14)
 sub.Position = UDim2.new(0, 48, 0, 28)
 sub.BackgroundTransparency = 1
-sub.Text = "100% Corrigido"
+sub.Text = "Blacklist Ativa"
 sub.TextColor3 = currentTheme.Accent
 sub.TextSize = 9
 sub.Font = Enum.Font.GothamBold
@@ -453,7 +484,7 @@ local statusText = Instance.new("TextLabel")
 statusText.Size = UDim2.new(1, -22, 1, 0)
 statusText.Position = UDim2.new(0, 20, 0, 0)
 statusText.BackgroundTransparency = 1
-statusText.Text = "✅ Pronto"
+statusText.Text = "✅ Pronto | 🔒 Blacklist ON"
 statusText.TextColor3 = currentTheme.TextSecondary
 statusText.TextSize = 10
 statusText.Font = Enum.Font.GothamSemibold
@@ -668,7 +699,7 @@ end
 
 makeBtn(0.03, 380, 0.47, 34, "👁️", "ESP", Color3.fromRGB(130, 45, 180), "esp", function(on)
     if on then enableESP() else disableESP() end
-    statusText.Text = on and "👁️ ESP ON" or "✅ Pronto"
+    statusText.Text = on and "👁️ ESP ON" or "✅ Pronto | 🔒 Blacklist ON"
 end)
 
 makeBtn(0.52, 380, 0.47, 34, "🎯", "Teleport", Color3.fromRGB(75, 35, 190), "tp", function(on)
@@ -679,11 +710,11 @@ makeBtn(0.52, 380, 0.47, 34, "🎯", "Teleport", Color3.fromRGB(75, 35, 190), "t
         end
         startTP()
         statusText.Text = "🎯 " .. targetPlayer.DisplayName
-    else stopTP(); statusText.Text = "✅ Pronto" end
+    else stopTP(); statusText.Text = "✅ Pronto | 🔒 Blacklist ON" end
 end)
 
 makeBtn(0.03, 422, 0.47, 34, "👥", "Team TP", Color3.fromRGB(55, 25, 140), "team", function(on)
-    if on then startTeamTP(); statusText.Text = "👥 Team TP ON" else stopTeamTP(); statusText.Text = "✅ Pronto" end
+    if on then startTeamTP(); statusText.Text = "👥 Team TP ON" else stopTeamTP(); statusText.Text = "✅ Pronto | 🔒 Blacklist ON" end
 end)
 
 makeBtn(0.52, 422, 0.47, 34, "💀", "Corpse TP", Color3.fromRGB(200, 50, 50), "corpse", function(on)
@@ -693,15 +724,15 @@ makeBtn(0.52, 422, 0.47, 34, "💀", "Corpse TP", Color3.fromRGB(200, 50, 50), "
             btnState.corpse = false; return
         end
         startCorpseTP(); statusText.Text = "💀 Corpse TP ON"
-    else stopCorpseTP(); statusText.Text = "✅ Pronto" end
+    else stopCorpseTP(); statusText.Text = "✅ Pronto | 🔒 Blacklist ON" end
 end)
 
 makeBtn(0.03, 464, 0.47, 34, "👻", "NoClip", Color3.fromRGB(80, 80, 160), "noclip", function(on)
-    toggleNoClip(on); statusText.Text = on and "👻 NoClip ON" or "✅ Pronto"
+    toggleNoClip(on); statusText.Text = on and "👻 NoClip ON" or "✅ Pronto | 🔒 Blacklist ON"
 end)
 
 makeBtn(0.52, 464, 0.47, 34, "🕊️", "Fly", Color3.fromRGB(100, 150, 255), "fly", function(on)
-    toggleFly(on); statusText.Text = on and "🕊️ Fly ON" or "✅ Pronto"
+    toggleFly(on); statusText.Text = on and "🕊️ Fly ON" or "✅ Pronto | 🔒 Blacklist ON"
 end)
 
 -- ====================== LISTA DE JOGADORES ======================
@@ -774,9 +805,10 @@ player.Chatted:Connect(function(msg)
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "✅ MIDHUB v10.2",
-    Text = "100% Corrigido! /midhub",
+    Title = "✅ MIDHUB v10.3",
+    Text = "Blacklist Ativa! /midhub",
     Duration = 4,
 })
 
-print("✅ MIDHUB v10.2 - 100% CORRIGIDO E FUNCIONAL!")
+print("✅ MIDHUB v10.3 - BLACKLIST SYSTEM ATIVO!")
+print("🔒 Player 1535973363 BLOQUEADO!")
