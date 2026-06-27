@@ -1,5 +1,5 @@
 -- LocalScript → StarterPlayer > StarterPlayerScripts
--- MIDHUB v10.3 - BLACKLIST SYSTEM
+-- MIDHUB v10.5 - DISTÂNCIA DO TELEPORT AJUSTÁVEL (Metros)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,33 +14,21 @@ local player = Players.LocalPlayer
 
 -- ====================== BLACKLIST SYSTEM ======================
 local Blacklist = {
-    [1535973363] = true, -- Player bloqueado
-    -- Adicione mais IDs aqui:
-    -- [123456789] = true,
-    -- [987654321] = true,
+    [1535973363] = true,
 }
 
--- Verifica se o jogador atual está na blacklist
 if Blacklist[player.UserId] then
-    -- Destroi o script imediatamente
     StarterGui:SetCore("SendNotification", {
         Title = "🚫 ACESSO NEGADO",
         Text = "Você está na blacklist do MIDHUB!",
         Duration = 10,
     })
-    
-    -- Remove o script
-    pcall(function()
-        script:Destroy()
-    end)
-    
-    -- Tenta remover o ScreenGui se já existir
+    pcall(function() script:Destroy() end)
     pcall(function()
         local oldGui = player.PlayerGui:FindFirstChild("MIDHUB")
         if oldGui then oldGui:Destroy() end
     end)
-    
-    return -- Para a execução do script
+    return
 end
 
 -- ====================== CONFIGURAÇÕES ======================
@@ -48,10 +36,16 @@ local Settings = {
     ESP_Enabled = false,
     ESP_MaxDistance = 9999,
     ESP_ShowBoxes = true,
+    ESP_ShowTracers = true,
+    ESP_ShowHeadDot = true,
+    ESP_ShowHealth = true,
+    ESP_ShowDistance = true,
+    ESP_ShowWeapon = true,
     ESP_TextSize = 13,
     ESP_TeamCheck = false,
     
-    Teleport_Distance = 3,
+    -- Teleport com distância configurável
+    Teleport_Distance = 3, -- Distância padrão: 3 metros
     Teleport_Height = 0,
     
     NoClip_Enabled = false,
@@ -119,9 +113,7 @@ player.CharacterAdded:Connect(function(char)
     if h then
         h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         h.StateChanged:Connect(function(_, ns)
-            if ns == Enum.HumanoidStateType.FallingDown then
-                h:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end
+            if ns == Enum.HumanoidStateType.FallingDown then h:ChangeState(Enum.HumanoidStateType.GettingUp) end
         end)
     end
 end)
@@ -138,9 +130,7 @@ local function toggleFullBright(on)
 end
 
 -- ====================== NOCLIP ======================
-local function toggleNoClip(on)
-    Settings.NoClip_Enabled = on
-end
+local function toggleNoClip(on) Settings.NoClip_Enabled = on end
 RunService.Stepped:Connect(function()
     if Settings.NoClip_Enabled and player.Character then
         for _, p in pairs(player.Character:GetDescendants()) do
@@ -160,8 +150,7 @@ local function toggleFly(on)
             local char = player.Character
             if not char or not char:FindFirstChild("HumanoidRootPart") then return end
             local root = char.HumanoidRootPart
-            local h = char:FindFirstChild("Humanoid")
-            if h then h.PlatformStand = true end
+            local h = char:FindFirstChild("Humanoid"); if h then h.PlatformStand = true end
             local move = Vector3.zero
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
             if UserInputService:IsKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
@@ -173,14 +162,11 @@ local function toggleFly(on)
         end)
     else
         if flyConn then flyConn:Disconnect(); flyConn = nil end
-        if player.Character then
-            local h = player.Character:FindFirstChild("Humanoid")
-            if h then h.PlatformStand = false end
-        end
+        if player.Character then local h = player.Character:FindFirstChild("Humanoid"); if h then h.PlatformStand = false end end
     end
 end
 
--- ====================== TELEPORT ======================
+-- ====================== TELEPORT COM DISTÂNCIA AJUSTÁVEL ======================
 local targetPlayer = nil
 local isTP = false
 local tpConn = nil
@@ -194,6 +180,7 @@ local function doTeleport(plr)
     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
     if not myRoot then return end
     
+    -- Usa a distância configurada nas Settings
     local behind = -tRoot.CFrame.LookVector
     local pos = tRoot.Position + (behind * Settings.Teleport_Distance) + Vector3.new(0, Settings.Teleport_Height, 0)
     local rot = myRoot.CFrame - myRoot.Position
@@ -265,15 +252,9 @@ local function doCorpseTP(corpse)
     if not myChar then return end
     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
     if not myRoot then return end
-    
     local part = corpse:FindFirstChild("HumanoidRootPart") or corpse:FindFirstChild("Head") or corpse:FindFirstChild("Torso")
-    if not part then
-        for _, p in pairs(corpse:GetDescendants()) do
-            if p:IsA("BasePart") then part = p; break end
-        end
-    end
+    if not part then for _, p in pairs(corpse:GetDescendants()) do if p:IsA("BasePart") then part = p; break end end end
     if not part then return end
-    
     local pos = part.Position + Vector3.new(0, 3, 0)
     local rot = myRoot.CFrame - myRoot.Position
     myRoot.CFrame = CFrame.new(pos) * rot
@@ -295,97 +276,170 @@ local function stopCorpseTP()
 end
 
 -- ====================== ESP ======================
-local espData = {}
+local espObjects = {}
+
+local function getWeaponName(char)
+    for _, child in pairs(char:GetChildren()) do
+        if child:IsA("Tool") then return child.Name end
+    end
+    return "Nenhuma"
+end
 
 local function createESP(plr, idx)
     if not plr.Character then return end
     local char = plr.Character
     local head = char:FindFirstChild("Head")
+    local humanoid = char:FindFirstChild("Humanoid")
     if not head then return end
     if Settings.ESP_TeamCheck and plr.Team == player.Team then return end
     
-    if espData[plr] then
-        pcall(function() espData[plr].hl:Destroy() end)
-        pcall(function() espData[plr].bb:Destroy() end)
+    if espObjects[plr] then
+        local old = espObjects[plr]
+        pcall(function() if old.highlight then old.highlight:Destroy() end end)
+        pcall(function() if old.billboard then old.billboard:Destroy() end end)
+        pcall(function() if old.tracer then old.tracer:Remove() end end)
+        pcall(function() if old.headDot then old.headDot:Remove() end end)
+        if old.connections then for _, conn in pairs(old.connections) do pcall(function() conn:Disconnect() end) end end
     end
     
-    local data = {}
+    local data = {connections = {}}
     
     if Settings.ESP_ShowBoxes then
         local hl = Instance.new("Highlight")
-        hl.FillColor = currentTheme.Accent
-        hl.FillTransparency = 0.85
-        hl.OutlineColor = currentTheme.Primary
-        hl.OutlineTransparency = 0.2
-        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        hl.Parent = char
-        data.hl = hl
+        hl.FillColor = currentTheme.Accent; hl.FillTransparency = 0.85
+        hl.OutlineColor = currentTheme.Primary; hl.OutlineTransparency = 0.2
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = char; data.highlight = hl
     end
     
-    local bb = Instance.new("BillboardGui")
-    bb.Size = UDim2.new(0, 160, 0, 35)
-    bb.StudsOffset = Vector3.new(0, 2.2 + (idx * 0.5), 0)
-    bb.AlwaysOnTop = true
-    bb.MaxDistance = Settings.ESP_MaxDistance
-    bb.Parent = head
-    data.bb = bb
+    if Settings.ESP_ShowHeadDot then
+        local dot = Drawing.new("Circle")
+        dot.Color = Color3.fromRGB(255, 40, 40); dot.Filled = true; dot.Transparency = 0.4; dot.Radius = 5; dot.Visible = false
+        local dotConn = RunService.RenderStepped:Connect(function()
+            if not char or not char.Parent or not char:FindFirstChild("Head") then dot.Visible = false; return end
+            local pos, visible = Camera:WorldToViewportPoint(char.Head.Position)
+            if visible and pos.Z > 0 then dot.Position = Vector2.new(pos.X, pos.Y); dot.Visible = true else dot.Visible = false end
+        end); table.insert(data.connections, dotConn); data.headDot = dot
+    end
     
-    local f = Instance.new("Frame", bb)
-    f.Size = UDim2.new(1, 0, 1, 0)
-    f.BackgroundColor3 = currentTheme.Surface
-    f.BackgroundTransparency = 0.25
-    f.BorderSizePixel = 0
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0, 200, 0, 70)
+    billboard.StudsOffset = Vector3.new(0, 2.5 + (idx * 0.6), 0)
+    billboard.AlwaysOnTop = true; billboard.MaxDistance = Settings.ESP_MaxDistance; billboard.Parent = head; data.billboard = billboard
     
-    local l = Instance.new("TextLabel", f)
-    l.Size = UDim2.new(1, -6, 1, 0)
-    l.Position = UDim2.new(0, 3, 0, 0)
-    l.BackgroundTransparency = 1
-    l.Text = plr.DisplayName
-    l.TextColor3 = Color3.new(1, 1, 1)
-    l.TextSize = Settings.ESP_TextSize
-    l.Font = Enum.Font.GothamBlack
-    l.TextXAlignment = Enum.TextXAlignment.Center
+    local frame = Instance.new("Frame", billboard)
+    frame.Size = UDim2.new(1, 0, 1, 0); frame.BackgroundColor3 = currentTheme.Surface
+    frame.BackgroundTransparency = 0.3; frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    Instance.new("UIStroke", frame).Color = currentTheme.Primary; frame.UIStroke.Thickness = 1.5; frame.UIStroke.Transparency = 0.35
     
-    char.AncestryChanged:Connect(function()
-        if not char.Parent then
-            pcall(function() data.hl:Destroy() end)
-            pcall(function() data.bb:Destroy() end)
-            espData[plr] = nil
+    local nameLabel = Instance.new("TextLabel", frame)
+    nameLabel.Size = UDim2.new(1, -10, 0.28, 0); nameLabel.Position = UDim2.new(0, 5, 0, 3)
+    nameLabel.BackgroundTransparency = 1; nameLabel.Text = plr.DisplayName
+    nameLabel.TextColor3 = Color3.new(1, 1, 1); nameLabel.TextSize = 14
+    nameLabel.Font = Enum.Font.GothamBlack; nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+    
+    local healthLabel = Instance.new("TextLabel", frame)
+    healthLabel.Size = UDim2.new(0.5, -5, 0.25, 0); healthLabel.Position = UDim2.new(0, 5, 0.32, 0)
+    healthLabel.BackgroundTransparency = 1; healthLabel.Text = "❤️ " .. (humanoid and math.floor(humanoid.Health) or "?")
+    healthLabel.TextColor3 = currentTheme.Success; healthLabel.TextSize = 12
+    healthLabel.Font = Enum.Font.GothamBold; healthLabel.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local distLabel = Instance.new("TextLabel", frame)
+    distLabel.Size = UDim2.new(0.5, -5, 0.25, 0); distLabel.Position = UDim2.new(0.5, 0, 0.32, 0)
+    distLabel.BackgroundTransparency = 1; distLabel.Text = "📏 0m"
+    distLabel.TextColor3 = currentTheme.TextSecondary; distLabel.TextSize = 12
+    distLabel.Font = Enum.Font.GothamBold; distLabel.TextXAlignment = Enum.TextXAlignment.Right
+    
+    local weaponLabel = Instance.new("TextLabel", frame)
+    weaponLabel.Size = UDim2.new(1, -10, 0.25, 0); weaponLabel.Position = UDim2.new(0, 5, 0.60, 0)
+    weaponLabel.BackgroundTransparency = 1; weaponLabel.Text = "🔫 " .. getWeaponName(char)
+    weaponLabel.TextColor3 = currentTheme.Warning; weaponLabel.TextSize = 11
+    weaponLabel.Font = Enum.Font.GothamSemibold; weaponLabel.TextXAlignment = Enum.TextXAlignment.Center
+    
+    local function updateWeapon() weaponLabel.Text = "🔫 " .. getWeaponName(char) end
+    local childAdded = char.ChildAdded:Connect(function(child) if child:IsA("Tool") then updateWeapon() end end)
+    table.insert(data.connections, childAdded)
+    local childRemoved = char.ChildRemoved:Connect(function(child) if child:IsA("Tool") then updateWeapon() end end)
+    table.insert(data.connections, childRemoved)
+    
+    if humanoid then
+        local healthConn = humanoid.HealthChanged:Connect(function(hp)
+            local pct = hp / humanoid.MaxHealth; healthLabel.Text = "❤️ " .. math.floor(hp)
+            if pct > 0.6 then healthLabel.TextColor3 = currentTheme.Success
+            elseif pct > 0.3 then healthLabel.TextColor3 = currentTheme.Warning
+            else healthLabel.TextColor3 = currentTheme.Danger end
+            if hp <= 0 then
+                pcall(function() if data.highlight then data.highlight:Destroy() end end)
+                pcall(function() if data.billboard then data.billboard:Destroy() end end)
+                pcall(function() if data.tracer then data.tracer:Remove() end end)
+                pcall(function() if data.headDot then data.headDot:Remove() end end)
+            end
+        end); table.insert(data.connections, healthConn)
+    end
+    
+    local distConn = RunService.RenderStepped:Connect(function()
+        if not char or not char.Parent or not char:FindFirstChild("HumanoidRootPart") then return end
+        local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local targetRoot = char.HumanoidRootPart
+        if myRoot and targetRoot then
+            local dist = (myRoot.Position - targetRoot.Position).Magnitude
+            distLabel.Text = "📏 " .. math.floor(dist) .. "m"
+            if dist < 15 then distLabel.TextColor3 = currentTheme.Danger
+            elseif dist < 40 then distLabel.TextColor3 = currentTheme.Warning
+            else distLabel.TextColor3 = currentTheme.Success end
         end
-    end)
+    end); table.insert(data.connections, distConn)
     
-    espData[plr] = data
+    if Settings.ESP_ShowTracers then
+        local tracer = Drawing.new("Line")
+        tracer.Color = currentTheme.Primary; tracer.Thickness = 0.6; tracer.Transparency = 0.65; tracer.Visible = false
+        local tracerConn = RunService.RenderStepped:Connect(function()
+            if not char or not char.Parent or not char:FindFirstChild("HumanoidRootPart") then tracer.Visible = false; return end
+            local pos, visible = Camera:WorldToViewportPoint(char.HumanoidRootPart.Position)
+            if visible and pos.Z > 0 then
+                tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
+                tracer.To = Vector2.new(pos.X, pos.Y); tracer.Visible = true
+            else tracer.Visible = false end
+        end); table.insert(data.connections, tracerConn); data.tracer = tracer
+    end
+    
+    local charRemoved = char.AncestryChanged:Connect(function()
+        if not char.Parent then
+            pcall(function() if data.highlight then data.highlight:Destroy() end end)
+            pcall(function() if data.billboard then data.billboard:Destroy() end end)
+            pcall(function() if data.tracer then data.tracer:Remove() end end)
+            pcall(function() if data.headDot then data.headDot:Remove() end end)
+            for _, conn in pairs(data.connections) do pcall(function() conn:Disconnect() end) end
+            espObjects[plr] = nil
+        end
+    end); table.insert(data.connections, charRemoved)
+    
+    espObjects[plr] = data
 end
 
 local function refreshESP()
     if not Settings.ESP_Enabled then return end
-    for _, d in pairs(espData) do
-        pcall(function() d.hl:Destroy() end)
-        pcall(function() d.bb:Destroy() end)
-    end
-    espData = {}
-    local list = {}
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= player then table.insert(list, p) end
-    end
-    for i, p in ipairs(list) do
-        if p.Character then createESP(p, i) end
-    end
+    for plr, data in pairs(espObjects) do
+        pcall(function() if data.highlight then data.highlight:Destroy() end end)
+        pcall(function() if data.billboard then data.billboard:Destroy() end end)
+        pcall(function() if data.tracer then data.tracer:Remove() end end)
+        pcall(function() if data.headDot then data.headDot:Remove() end end)
+        if data.connections then for _, conn in pairs(data.connections) do pcall(function() conn:Disconnect() end) end end
+    end; espObjects = {}
+    local playerList = {}; for _, p in pairs(Players:GetPlayers()) do if p ~= player then table.insert(playerList, p) end end
+    for i, p in ipairs(playerList) do if p.Character then createESP(p, i) end end
 end
 
-local function enableESP()
-    Settings.ESP_Enabled = true
-    refreshESP()
-end
-
+local function enableESP() Settings.ESP_Enabled = true; refreshESP() end
 local function disableESP()
     Settings.ESP_Enabled = false
-    for _, d in pairs(espData) do
-        pcall(function() d.hl:Destroy() end)
-        pcall(function() d.bb:Destroy() end)
-    end
-    espData = {}
+    for plr, data in pairs(espObjects) do
+        pcall(function() if data.highlight then data.highlight:Destroy() end end)
+        pcall(function() if data.billboard then data.billboard:Destroy() end end)
+        pcall(function() if data.tracer then data.tracer:Remove() end end)
+        pcall(function() if data.headDot then data.headDot:Remove() end end)
+        if data.connections then for _, conn in pairs(data.connections) do pcall(function() conn:Disconnect() end) end end
+    end; espObjects = {}
 end
 
 -- ====================== GUI ======================
@@ -396,8 +450,8 @@ screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 320, 0, 500)
-mainFrame.Position = UDim2.new(0, 5, 0.5, -250)
+mainFrame.Size = UDim2.new(0, 320, 0, 540)
+mainFrame.Position = UDim2.new(0, 5, 0.5, -270)
 mainFrame.BackgroundColor3 = currentTheme.Background
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -418,161 +472,104 @@ header.Parent = mainFrame
 Instance.new("UICorner", header).CornerRadius = UDim.new(0, 16)
 
 local logo = Instance.new("TextLabel")
-logo.Size = UDim2.new(0, 35, 0, 35)
-logo.Position = UDim2.new(0, 8, 0, 5)
-logo.BackgroundTransparency = 1
-logo.Text = currentTheme.Icon
-logo.TextSize = 22
-logo.Font = Enum.Font.GothamBlack
-logo.Parent = header
+logo.Size = UDim2.new(0, 35, 0, 35); logo.Position = UDim2.new(0, 8, 0, 5)
+logo.BackgroundTransparency = 1; logo.Text = currentTheme.Icon; logo.TextSize = 22
+logo.Font = Enum.Font.GothamBlack; logo.Parent = header
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -100, 0, 25)
-title.Position = UDim2.new(0, 48, 0, 5)
-title.BackgroundTransparency = 1
-title.Text = "MIDHUB v10.3"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 16
-title.Font = Enum.Font.GothamBlack
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = header
+title.Size = UDim2.new(1, -100, 0, 25); title.Position = UDim2.new(0, 48, 0, 5)
+title.BackgroundTransparency = 1; title.Text = "MIDHUB v10.5"
+title.TextColor3 = Color3.new(1,1,1); title.TextSize = 16
+title.Font = Enum.Font.GothamBlack; title.TextXAlignment = Enum.TextXAlignment.Left; title.Parent = header
 
 local sub = Instance.new("TextLabel")
-sub.Size = UDim2.new(0, 100, 0, 14)
-sub.Position = UDim2.new(0, 48, 0, 28)
-sub.BackgroundTransparency = 1
-sub.Text = "Blacklist Ativa"
-sub.TextColor3 = currentTheme.Accent
-sub.TextSize = 9
-sub.Font = Enum.Font.GothamBold
-sub.TextXAlignment = Enum.TextXAlignment.Left
-sub.Parent = header
+sub.Size = UDim2.new(0, 150, 0, 14); sub.Position = UDim2.new(0, 48, 0, 28)
+sub.BackgroundTransparency = 1; sub.Text = "Teleport: 1m a 10m"
+sub.TextColor3 = currentTheme.Accent; sub.TextSize = 9
+sub.Font = Enum.Font.GothamBold; sub.TextXAlignment = Enum.TextXAlignment.Left; sub.Parent = header
 
 local btnX = Instance.new("TextButton")
-btnX.Size = UDim2.new(0, 26, 0, 26)
-btnX.Position = UDim2.new(1, -34, 0, 10)
-btnX.BackgroundColor3 = Color3.fromRGB(255, 55, 55)
-btnX.BackgroundTransparency = 0.2
-btnX.Text = "✕"
-btnX.TextColor3 = Color3.new(1, 1, 1)
-btnX.TextSize = 13
-btnX.Font = Enum.Font.GothamBold
-btnX.AutoButtonColor = false
-btnX.Parent = header
+btnX.Size = UDim2.new(0, 26, 0, 26); btnX.Position = UDim2.new(1, -34, 0, 10)
+btnX.BackgroundColor3 = Color3.fromRGB(255, 55, 55); btnX.BackgroundTransparency = 0.2
+btnX.Text = "✕"; btnX.TextColor3 = Color3.new(1,1,1); btnX.TextSize = 13
+btnX.Font = Enum.Font.GothamBold; btnX.AutoButtonColor = false; btnX.Parent = header
 Instance.new("UICorner", btnX).CornerRadius = UDim.new(0, 7)
 btnX.MouseButton1Click:Connect(function() mainFrame.Visible = false end)
 
 -- Status
 local statusBar = Instance.new("Frame")
-statusBar.Size = UDim2.new(1, -12, 0, 24)
+statusBar.Size = UDim2.new(1, -12, 0, 28)
 statusBar.Position = UDim2.new(0, 6, 0, 50)
 statusBar.BackgroundColor3 = currentTheme.SurfaceLight
-statusBar.BorderSizePixel = 0
-statusBar.ClipsDescendants = true
-statusBar.Parent = mainFrame
+statusBar.BorderSizePixel = 0; statusBar.ClipsDescendants = true; statusBar.Parent = mainFrame
 Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0, 8)
 
 local statusDot = Instance.new("Frame")
-statusDot.Size = UDim2.new(0, 8, 0, 8)
-statusDot.Position = UDim2.new(0, 8, 0.5, -4)
-statusDot.BackgroundColor3 = currentTheme.Success
-statusDot.BorderSizePixel = 0
-statusDot.Parent = statusBar
+statusDot.Size = UDim2.new(0, 8, 0, 8); statusDot.Position = UDim2.new(0, 8, 0.5, -4)
+statusDot.BackgroundColor3 = currentTheme.Success; statusDot.BorderSizePixel = 0; statusDot.Parent = statusBar
 Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
 
 local statusText = Instance.new("TextLabel")
-statusText.Size = UDim2.new(1, -22, 1, 0)
-statusText.Position = UDim2.new(0, 20, 0, 0)
-statusText.BackgroundTransparency = 1
-statusText.Text = "✅ Pronto | 🔒 Blacklist ON"
-statusText.TextColor3 = currentTheme.TextSecondary
-statusText.TextSize = 10
-statusText.Font = Enum.Font.GothamSemibold
-statusText.TextXAlignment = Enum.TextXAlignment.Left
-statusText.Parent = statusBar
+statusText.Size = UDim2.new(1, -22, 1, 0); statusText.Position = UDim2.new(0, 20, 0, 0)
+statusText.BackgroundTransparency = 1; statusText.Text = "📏 Distância Teleport: " .. Settings.Teleport_Distance .. "m"
+statusText.TextColor3 = currentTheme.TextSecondary; statusText.TextSize = 10
+statusText.Font = Enum.Font.GothamSemibold; statusText.TextXAlignment = Enum.TextXAlignment.Left; statusText.Parent = statusBar
 
 -- Separador
 local sep = Instance.new("Frame")
-sep.Size = UDim2.new(1, -12, 0, 1)
-sep.Position = UDim2.new(0, 6, 0, 79)
-sep.BackgroundColor3 = currentTheme.Primary
-sep.BackgroundTransparency = 0.6
-sep.BorderSizePixel = 0
-sep.Parent = mainFrame
+sep.Size = UDim2.new(1, -12, 0, 1); sep.Position = UDim2.new(0, 6, 0, 83)
+sep.BackgroundColor3 = currentTheme.Primary; sep.BackgroundTransparency = 0.6
+sep.BorderSizePixel = 0; sep.Parent = mainFrame
 
 -- Abas
 local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, -12, 0, 28)
-tabBar.Position = UDim2.new(0, 6, 0, 84)
-tabBar.BackgroundColor3 = currentTheme.Surface
-tabBar.BackgroundTransparency = 0.4
-tabBar.BorderSizePixel = 0
-tabBar.ClipsDescendants = true
-tabBar.Parent = mainFrame
+tabBar.Size = UDim2.new(1, -12, 0, 28); tabBar.Position = UDim2.new(0, 6, 0, 88)
+tabBar.BackgroundColor3 = currentTheme.Surface; tabBar.BackgroundTransparency = 0.4
+tabBar.BorderSizePixel = 0; tabBar.ClipsDescendants = true; tabBar.Parent = mainFrame
 Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 8)
 
 local contentArea = Instance.new("Frame")
-contentArea.Size = UDim2.new(1, -12, 0, 255)
-contentArea.Position = UDim2.new(0, 6, 0, 116)
-contentArea.BackgroundTransparency = 1
-contentArea.ClipsDescendants = true
-contentArea.Parent = mainFrame
+contentArea.Size = UDim2.new(1, -12, 0, 245)
+contentArea.Position = UDim2.new(0, 6, 0, 120)
+contentArea.BackgroundTransparency = 1; contentArea.ClipsDescendants = true; contentArea.Parent = mainFrame
 
 -- ABA JOGADORES
 local playersFrame = Instance.new("Frame")
-playersFrame.Size = UDim2.new(1, 0, 1, 0)
-playersFrame.BackgroundTransparency = 1
-playersFrame.Visible = true
-playersFrame.Parent = contentArea
+playersFrame.Size = UDim2.new(1, 0, 1, 0); playersFrame.BackgroundTransparency = 1
+playersFrame.Visible = true; playersFrame.Parent = contentArea
 
 local searchInput = Instance.new("TextBox")
-searchInput.Size = UDim2.new(1, 0, 0, 26)
-searchInput.BackgroundColor3 = currentTheme.Surface
-searchInput.PlaceholderText = "🔍 Buscar..."
-searchInput.PlaceholderColor3 = currentTheme.TextSecondary
-searchInput.Text = ""
-searchInput.TextColor3 = Color3.new(1, 1, 1)
-searchInput.TextSize = 11
-searchInput.Font = Enum.Font.Gotham
-searchInput.Parent = playersFrame
+searchInput.Size = UDim2.new(1, 0, 0, 26); searchInput.BackgroundColor3 = currentTheme.Surface
+searchInput.PlaceholderText = "🔍 Buscar..."; searchInput.PlaceholderColor3 = currentTheme.TextSecondary
+searchInput.Text = ""; searchInput.TextColor3 = Color3.new(1,1,1); searchInput.TextSize = 11
+searchInput.Font = Enum.Font.Gotham; searchInput.Parent = playersFrame
 Instance.new("UICorner", searchInput).CornerRadius = UDim.new(0, 8)
 
 local playersScroll = Instance.new("ScrollingFrame")
-playersScroll.Size = UDim2.new(1, 0, 1, -32)
-playersScroll.Position = UDim2.new(0, 0, 0, 32)
-playersScroll.BackgroundColor3 = currentTheme.Surface
-playersScroll.BackgroundTransparency = 0.4
-playersScroll.BorderSizePixel = 0
-playersScroll.ScrollBarThickness = 4
-playersScroll.ScrollBarImageColor3 = currentTheme.Primary
-playersScroll.Parent = playersFrame
+playersScroll.Size = UDim2.new(1, 0, 1, -32); playersScroll.Position = UDim2.new(0, 0, 0, 32)
+playersScroll.BackgroundColor3 = currentTheme.Surface; playersScroll.BackgroundTransparency = 0.4
+playersScroll.BorderSizePixel = 0; playersScroll.ScrollBarThickness = 4
+playersScroll.ScrollBarImageColor3 = currentTheme.Primary; playersScroll.Parent = playersFrame
 Instance.new("UICorner", playersScroll).CornerRadius = UDim.new(0, 8)
 
 local playersList = Instance.new("UIListLayout")
-playersList.SortOrder = Enum.SortOrder.LayoutOrder
-playersList.Padding = UDim.new(0, 4)
+playersList.SortOrder = Enum.SortOrder.LayoutOrder; playersList.Padding = UDim.new(0, 4)
 playersList.Parent = playersScroll
 
 -- ABA CORPOS
 local corpsesFrame = Instance.new("Frame")
-corpsesFrame.Size = UDim2.new(1, 0, 1, 0)
-corpsesFrame.BackgroundTransparency = 1
-corpsesFrame.Visible = false
-corpsesFrame.Parent = contentArea
+corpsesFrame.Size = UDim2.new(1, 0, 1, 0); corpsesFrame.BackgroundTransparency = 1
+corpsesFrame.Visible = false; corpsesFrame.Parent = contentArea
 
 local corpsesScroll = Instance.new("ScrollingFrame")
-corpsesScroll.Size = UDim2.new(1, 0, 1, 0)
-corpsesScroll.BackgroundColor3 = currentTheme.Surface
-corpsesScroll.BackgroundTransparency = 0.4
-corpsesScroll.BorderSizePixel = 0
-corpsesScroll.ScrollBarThickness = 4
-corpsesScroll.ScrollBarImageColor3 = currentTheme.Danger
+corpsesScroll.Size = UDim2.new(1, 0, 1, 0); corpsesScroll.BackgroundColor3 = currentTheme.Surface
+corpsesScroll.BackgroundTransparency = 0.4; corpsesScroll.BorderSizePixel = 0
+corpsesScroll.ScrollBarThickness = 4; corpsesScroll.ScrollBarImageColor3 = currentTheme.Danger
 corpsesScroll.Parent = corpsesFrame
 Instance.new("UICorner", corpsesScroll).CornerRadius = UDim.new(0, 8)
 
 local corpsesList = Instance.new("UIListLayout")
-corpsesList.SortOrder = Enum.SortOrder.LayoutOrder
-corpsesList.Padding = UDim.new(0, 4)
+corpsesList.SortOrder = Enum.SortOrder.LayoutOrder; corpsesList.Padding = UDim.new(0, 4)
 corpsesList.Parent = corpsesScroll
 
 local function updateCorpses()
@@ -583,12 +580,8 @@ local function updateCorpses()
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1, -4, 0, 28)
             btn.BackgroundColor3 = targetCorpse == obj and currentTheme.Danger or currentTheme.Surface
-            btn.Text = "💀 " .. obj.Name
-            btn.TextColor3 = Color3.new(1, 1, 1)
-            btn.TextSize = 11
-            btn.Font = Enum.Font.GothamSemibold
-            btn.AutoButtonColor = false
-            btn.Parent = corpsesScroll
+            btn.Text = "💀 " .. obj.Name; btn.TextColor3 = Color3.new(1,1,1); btn.TextSize = 11
+            btn.Font = Enum.Font.GothamSemibold; btn.AutoButtonColor = false; btn.Parent = corpsesScroll
             Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
             btn.MouseButton1Click:Connect(function()
                 targetCorpse = obj
@@ -603,9 +596,7 @@ end
 -- Switch Tab
 local curTab = "players"
 local function switchTab(t)
-    curTab = t
-    playersFrame.Visible = (t == "players")
-    corpsesFrame.Visible = (t == "corpses")
+    curTab = t; playersFrame.Visible = (t == "players"); corpsesFrame.Visible = (t == "corpses")
     if t == "corpses" then updateCorpses() end
     for _, c in pairs(tabBar:GetChildren()) do
         if c:IsA("TextButton") then
@@ -618,30 +609,18 @@ local function switchTab(t)
 end
 
 local tabPlr = Instance.new("TextButton")
-tabPlr.Size = UDim2.new(0.47, 0, 0.75, 0)
-tabPlr.Position = UDim2.new(0.015, 0, 0.125, 0)
-tabPlr.BackgroundColor3 = currentTheme.Primary
-tabPlr.BackgroundTransparency = 0.08
-tabPlr.Text = "🎮 Jogadores"
-tabPlr.TextColor3 = Color3.new(1, 1, 1)
-tabPlr.TextSize = 11
-tabPlr.Font = Enum.Font.GothamBold
-tabPlr.AutoButtonColor = false
-tabPlr.Parent = tabBar
+tabPlr.Size = UDim2.new(0.47, 0, 0.75, 0); tabPlr.Position = UDim2.new(0.015, 0, 0.125, 0)
+tabPlr.BackgroundColor3 = currentTheme.Primary; tabPlr.BackgroundTransparency = 0.08
+tabPlr.Text = "🎮 Jogadores"; tabPlr.TextColor3 = Color3.new(1,1,1); tabPlr.TextSize = 11
+tabPlr.Font = Enum.Font.GothamBold; tabPlr.AutoButtonColor = false; tabPlr.Parent = tabBar
 Instance.new("UICorner", tabPlr).CornerRadius = UDim.new(0, 7)
 tabPlr.MouseButton1Click:Connect(function() switchTab("players") end)
 
 local tabCrp = Instance.new("TextButton")
-tabCrp.Size = UDim2.new(0.47, 0, 0.75, 0)
-tabCrp.Position = UDim2.new(0.51, 0, 0.125, 0)
-tabCrp.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-tabCrp.BackgroundTransparency = 0.94
-tabCrp.Text = "💀 Corpos"
-tabCrp.TextColor3 = currentTheme.TextSecondary
-tabCrp.TextSize = 11
-tabCrp.Font = Enum.Font.GothamBold
-tabCrp.AutoButtonColor = false
-tabCrp.Parent = tabBar
+tabCrp.Size = UDim2.new(0.47, 0, 0.75, 0); tabCrp.Position = UDim2.new(0.51, 0, 0.125, 0)
+tabCrp.BackgroundColor3 = Color3.fromRGB(255,255,255); tabCrp.BackgroundTransparency = 0.94
+tabCrp.Text = "💀 Corpos"; tabCrp.TextColor3 = currentTheme.TextSecondary; tabCrp.TextSize = 11
+tabCrp.Font = Enum.Font.GothamBold; tabCrp.AutoButtonColor = false; tabCrp.Parent = tabBar
 Instance.new("UICorner", tabCrp).CornerRadius = UDim.new(0, 7)
 tabCrp.MouseButton1Click:Connect(function() switchTab("corpses") end)
 
@@ -651,34 +630,20 @@ local btnState = {}
 local function makeBtn(x, y, w, h, icon, text, color, key, cb)
     btnState[key] = btnState[key] or false
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(w, 0, 0, h)
-    btn.Position = UDim2.new(x, 0, 0, y)
+    btn.Size = UDim2.new(w, 0, 0, h); btn.Position = UDim2.new(x, 0, 0, y)
     btn.BackgroundColor3 = btnState[key] and currentTheme.Success or color
-    btn.Text = ""
-    btn.AutoButtonColor = false
-    btn.ClipsDescendants = true
-    btn.Parent = mainFrame
+    btn.Text = ""; btn.AutoButtonColor = false; btn.ClipsDescendants = true; btn.Parent = mainFrame
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
     
     local ic = Instance.new("TextLabel")
-    ic.Size = UDim2.new(0, 18, 1, 0)
-    ic.Position = UDim2.new(0, 7, 0, 0)
-    ic.BackgroundTransparency = 1
-    ic.Text = btnState[key] and "✅" or icon
-    ic.TextSize = 13
-    ic.Font = Enum.Font.Gotham
-    ic.Parent = btn
+    ic.Size = UDim2.new(0, 18, 1, 0); ic.Position = UDim2.new(0, 7, 0, 0)
+    ic.BackgroundTransparency = 1; ic.Text = btnState[key] and "✅" or icon
+    ic.TextSize = 13; ic.Font = Enum.Font.Gotham; ic.Parent = btn
     
     local tx = Instance.new("TextLabel")
-    tx.Size = UDim2.new(1, -27, 1, 0)
-    tx.Position = UDim2.new(0, 25, 0, 0)
-    tx.BackgroundTransparency = 1
-    tx.Text = text
-    tx.TextColor3 = Color3.new(1, 1, 1)
-    tx.TextSize = 11
-    tx.Font = Enum.Font.GothamSemibold
-    tx.TextXAlignment = Enum.TextXAlignment.Left
-    tx.Parent = btn
+    tx.Size = UDim2.new(1, -27, 1, 0); tx.Position = UDim2.new(0, 25, 0, 0)
+    tx.BackgroundTransparency = 1; tx.Text = text; tx.TextColor3 = Color3.new(1,1,1)
+    tx.TextSize = 11; tx.Font = Enum.Font.GothamSemibold; tx.TextXAlignment = Enum.TextXAlignment.Left; tx.Parent = btn
     
     btn.MouseButton1Click:Connect(function()
         btnState[key] = not btnState[key]
@@ -693,47 +658,111 @@ local function makeBtn(x, y, w, h, icon, text, color, key, cb)
     btn.MouseLeave:Connect(function()
         if not btnState[key] then TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color}):Play() end
     end)
-    
     return btn
 end
 
-makeBtn(0.03, 380, 0.47, 34, "👁️", "ESP", Color3.fromRGB(130, 45, 180), "esp", function(on)
+-- Linha 1
+makeBtn(0.03, 375, 0.47, 34, "👁️", "ESP", Color3.fromRGB(130, 45, 180), "esp", function(on)
     if on then enableESP() else disableESP() end
-    statusText.Text = on and "👁️ ESP ON" or "✅ Pronto | 🔒 Blacklist ON"
+    statusText.Text = on and "👁️ ESP ON" or "📏 Distância: " .. Settings.Teleport_Distance .. "m"
 end)
 
-makeBtn(0.52, 380, 0.47, 34, "🎯", "Teleport", Color3.fromRGB(75, 35, 190), "tp", function(on)
+makeBtn(0.52, 375, 0.47, 34, "🎯", "Teleport", Color3.fromRGB(75, 35, 190), "tp", function(on)
     if on then
         if not targetPlayer then
             StarterGui:SetCore("SendNotification", {Title = "Teleport", Text = "Selecione um jogador!", Duration = 2})
             btnState.tp = false; return
         end
         startTP()
-        statusText.Text = "🎯 " .. targetPlayer.DisplayName
-    else stopTP(); statusText.Text = "✅ Pronto | 🔒 Blacklist ON" end
+        statusText.Text = "🎯 " .. targetPlayer.DisplayName .. " | " .. Settings.Teleport_Distance .. "m"
+    else stopTP(); statusText.Text = "📏 Distância: " .. Settings.Teleport_Distance .. "m" end
 end)
 
-makeBtn(0.03, 422, 0.47, 34, "👥", "Team TP", Color3.fromRGB(55, 25, 140), "team", function(on)
-    if on then startTeamTP(); statusText.Text = "👥 Team TP ON" else stopTeamTP(); statusText.Text = "✅ Pronto | 🔒 Blacklist ON" end
+-- Linha 2
+makeBtn(0.03, 415, 0.47, 34, "👥", "Team TP", Color3.fromRGB(55, 25, 140), "team", function(on)
+    if on then startTeamTP(); statusText.Text = "👥 Team TP | " .. Settings.Teleport_Distance .. "m"
+    else stopTeamTP(); statusText.Text = "📏 Distância: " .. Settings.Teleport_Distance .. "m" end
 end)
 
-makeBtn(0.52, 422, 0.47, 34, "💀", "Corpse TP", Color3.fromRGB(200, 50, 50), "corpse", function(on)
+makeBtn(0.52, 415, 0.47, 34, "💀", "Corpse TP", Color3.fromRGB(200, 50, 50), "corpse", function(on)
     if on then
         if not targetCorpse then
             StarterGui:SetCore("SendNotification", {Title = "Corpse TP", Text = "Selecione um corpo!", Duration = 2})
             btnState.corpse = false; return
         end
         startCorpseTP(); statusText.Text = "💀 Corpse TP ON"
-    else stopCorpseTP(); statusText.Text = "✅ Pronto | 🔒 Blacklist ON" end
+    else stopCorpseTP(); statusText.Text = "📏 Distância: " .. Settings.Teleport_Distance .. "m" end
 end)
 
-makeBtn(0.03, 464, 0.47, 34, "👻", "NoClip", Color3.fromRGB(80, 80, 160), "noclip", function(on)
-    toggleNoClip(on); statusText.Text = on and "👻 NoClip ON" or "✅ Pronto | 🔒 Blacklist ON"
+-- Linha 3
+makeBtn(0.03, 455, 0.47, 34, "👻", "NoClip", Color3.fromRGB(80, 80, 160), "noclip", function(on)
+    toggleNoClip(on); statusText.Text = on and "👻 NoClip ON" or "📏 Distância: " .. Settings.Teleport_Distance .. "m"
 end)
 
-makeBtn(0.52, 464, 0.47, 34, "🕊️", "Fly", Color3.fromRGB(100, 150, 255), "fly", function(on)
-    toggleFly(on); statusText.Text = on and "🕊️ Fly ON" or "✅ Pronto | 🔒 Blacklist ON"
+makeBtn(0.52, 455, 0.47, 34, "🕊️", "Fly", Color3.fromRGB(100, 150, 255), "fly", function(on)
+    toggleFly(on); statusText.Text = on and "🕊️ Fly ON" or "📏 Distância: " .. Settings.Teleport_Distance .. "m"
 end)
+
+-- ====================== BOTÕES DE DISTÂNCIA DO TELEPORT ======================
+local distanceLabel = Instance.new("TextLabel")
+distanceLabel.Size = UDim2.new(1, -12, 0, 18)
+distanceLabel.Position = UDim2.new(0, 6, 0, 495)
+distanceLabel.BackgroundTransparency = 1
+distanceLabel.Text = "📏 DISTÂNCIA DO TELEPORT: " .. Settings.Teleport_Distance .. "m"
+distanceLabel.TextColor3 = currentTheme.Warning
+distanceLabel.TextSize = 10
+distanceLabel.Font = Enum.Font.GothamBold
+distanceLabel.TextXAlignment = Enum.TextXAlignment.Center
+distanceLabel.Parent = mainFrame
+
+-- Botões de distância (1m, 2m, 3m, 5m, 7m, 10m)
+local distances = {
+    {x = 0.03, text = "1m", dist = 1, icon = "🔴"},
+    {x = 0.19, text = "2m", dist = 2, icon = "🟠"},
+    {x = 0.35, text = "3m", dist = 3, icon = "🟡"},
+    {x = 0.51, text = "5m", dist = 5, icon = "🟢"},
+    {x = 0.67, text = "7m", dist = 7, icon = "🔵"},
+    {x = 0.83, text = "10m", dist = 10, icon = "🟣"},
+}
+
+for _, d in ipairs(distances) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.14, 0, 0, 26)
+    btn.Position = UDim2.new(d.x, 0, 0, 515)
+    btn.BackgroundColor3 = Settings.Teleport_Distance == d.dist and currentTheme.Primary or currentTheme.Surface
+    btn.Text = d.icon .. " " .. d.text
+    btn.TextColor3 = Settings.Teleport_Distance == d.dist and Color3.new(1,1,1) or currentTheme.TextSecondary
+    btn.TextSize = 9
+    btn.Font = Enum.Font.GothamBold
+    btn.AutoButtonColor = false
+    btn.Parent = mainFrame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    
+    btn.MouseButton1Click:Connect(function()
+        Settings.Teleport_Distance = d.dist
+        
+        -- Atualiza todos os botões de distância
+        for _, child in pairs(mainFrame:GetChildren()) do
+            if child:IsA("TextButton") then
+                for _, dd in ipairs(distances) do
+                    if child.Text:find(dd.text) then
+                        child.BackgroundColor3 = Settings.Teleport_Distance == dd.dist and currentTheme.Primary or currentTheme.Surface
+                        child.TextColor3 = Settings.Teleport_Distance == dd.dist and Color3.new(1,1,1) or currentTheme.TextSecondary
+                    end
+                end
+            end
+        end
+        
+        distanceLabel.Text = "📏 DISTÂNCIA DO TELEPORT: " .. Settings.Teleport_Distance .. "m"
+        statusText.Text = "📏 Distância: " .. Settings.Teleport_Distance .. "m"
+        
+        StarterGui:SetCore("SendNotification", {
+            Title = "📏 Distância",
+            Text = "Teleport configurado para " .. Settings.Teleport_Distance .. " metros!",
+            Duration = 2,
+        })
+    end)
+end
 
 -- ====================== LISTA DE JOGADORES ======================
 local function updatePlayers()
@@ -754,9 +783,8 @@ local function updatePlayers()
             
             local nm = Instance.new("TextLabel")
             nm.Size = UDim2.new(1, -45, 1, 0); nm.Position = UDim2.new(0, 22, 0, 0)
-            nm.BackgroundTransparency = 1; nm.Text = p.DisplayName
-            nm.TextColor3 = Color3.new(1,1,1); nm.TextSize = 11
-            nm.Font = Enum.Font.GothamSemibold; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.Parent = btn
+            nm.BackgroundTransparency = 1; nm.Text = p.DisplayName; nm.TextColor3 = Color3.new(1,1,1)
+            nm.TextSize = 11; nm.Font = Enum.Font.GothamSemibold; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.Parent = btn
             
             btn.MouseEnter:Connect(function() if targetPlayer ~= p then TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = currentTheme.Primary:Lerp(Color3.fromRGB(0,0,0), 0.5)}):Play() end end)
             btn.MouseLeave:Connect(function() if targetPlayer ~= p then TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = currentTheme.Surface}):Play() end end)
@@ -764,7 +792,7 @@ local function updatePlayers()
                 targetPlayer = p
                 for _, c in pairs(playersScroll:GetChildren()) do if c:IsA("TextButton") then c.BackgroundColor3 = currentTheme.Surface end end
                 btn.BackgroundColor3 = currentTheme.Primary
-                statusText.Text = "👤 " .. p.DisplayName
+                statusText.Text = "👤 " .. p.DisplayName .. " | " .. Settings.Teleport_Distance .. "m"
             end)
         end
     end
@@ -777,38 +805,30 @@ Players.PlayerRemoving:Connect(function(p) wait(0.1); if targetPlayer == p then 
 spawn(function() while true do updatePlayers(); wait(3) end end)
 updatePlayers()
 
--- ====================== APLICAR TEMA ======================
+-- Aplicar tema
 function applyTheme()
     currentTheme = Themes[Settings.UI_Theme]
-    mainFrame.BackgroundColor3 = currentTheme.Background
-    mainFrame.UIStroke.Color = currentTheme.Primary
-    header.BackgroundColor3 = currentTheme.Surface
-    logo.Text = currentTheme.Icon
-    sub.TextColor3 = currentTheme.Accent
-    statusBar.BackgroundColor3 = currentTheme.SurfaceLight
-    statusText.TextColor3 = currentTheme.TextSecondary
-    statusDot.BackgroundColor3 = currentTheme.Success
-    sep.BackgroundColor3 = currentTheme.Primary
-    searchInput.BackgroundColor3 = currentTheme.Surface
-    playersScroll.BackgroundColor3 = currentTheme.Surface
-    playersScroll.ScrollBarImageColor3 = currentTheme.Primary
-    corpsesScroll.BackgroundColor3 = currentTheme.Surface
-    corpsesScroll.ScrollBarImageColor3 = currentTheme.Danger
+    mainFrame.BackgroundColor3 = currentTheme.Background; mainFrame.UIStroke.Color = currentTheme.Primary
+    header.BackgroundColor3 = currentTheme.Surface; logo.Text = currentTheme.Icon
+    sub.TextColor3 = currentTheme.Accent; statusBar.BackgroundColor3 = currentTheme.SurfaceLight
+    statusText.TextColor3 = currentTheme.TextSecondary; statusDot.BackgroundColor3 = currentTheme.Success
+    sep.BackgroundColor3 = currentTheme.Primary; searchInput.BackgroundColor3 = currentTheme.Surface
+    playersScroll.BackgroundColor3 = currentTheme.Surface; playersScroll.ScrollBarImageColor3 = currentTheme.Primary
+    corpsesScroll.BackgroundColor3 = currentTheme.Surface; corpsesScroll.ScrollBarImageColor3 = currentTheme.Danger
+    distanceLabel.TextColor3 = currentTheme.Warning
     updatePlayers()
 end
 
--- ====================== COMANDO ======================
+-- Comando
 player.Chatted:Connect(function(msg)
-    if msg:lower() == "/midhub" or msg:lower() == "/mh" then
-        mainFrame.Visible = not mainFrame.Visible
-    end
+    if msg:lower() == "/midhub" or msg:lower() == "/mh" then mainFrame.Visible = not mainFrame.Visible end
 end)
 
 StarterGui:SetCore("SendNotification", {
-    Title = "✅ MIDHUB v10.3",
-    Text = "Blacklist Ativa! /midhub",
+    Title = "✅ MIDHUB v10.5",
+    Text = "Teleport: 1m a 10m ajustável! /midhub",
     Duration = 4,
 })
 
-print("✅ MIDHUB v10.3 - BLACKLIST SYSTEM ATIVO!")
-print("🔒 Player 1535973363 BLOQUEADO!")
+print("✅ MIDHUB v10.5 - Distância do Teleport Ajustável!")
+print("📏 1m | 2m | 3m | 5m | 7m | 10m")
